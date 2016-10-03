@@ -16,9 +16,9 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 #
-# You should have received a copy of the GNU General Public License
-# along with this program; if not, write to the Free Software
-# Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+# You should have received a copy of the GNU General Public License along
+# with this program; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
 use strict;
 use sigtrap;
@@ -26,7 +26,7 @@ use sigtrap;
 #TODO --fetch-unstable switch
 #TODO make sure that debian's version numbers are from i386
 #TODO get date info about debian, ubuntu (link is to changelog)
-#TODO get size and date info about slackware packages from subsequent links  - postponed until slackware packages is online again
+#TODO get date info about slackware packages from subsequent links  - postponed until slackware packages is online again
 #TODO architecture tests for those that support several
 #TODO Gentoo: only report two most recent for each package?
 #TODO make more use of the conf directory, e.g. for Fedora, Sourcemage, so we download those indexes only sparingly, and save ourselves processing time; MAKE SURE YOU WRITE THE PROCESSED RESULTS FOR EASY PARSING ON THE NEXT RUN
@@ -35,7 +35,6 @@ use sigtrap;
 #TODO ubuntu: allow two releases: the long term supported and the most recent
 #TODO allow searching on several packages; return results only for those distros that have a hit for each package, possibly in tabular format
 #TODO deal gracefully with hyphens that may be present in some distros but not others, i.e. include extra hyphens in regexes, and allow user-specified hyphens to be absent
-#TODO fix opensuse
 
 use Config;
 use Env qw(HOME);
@@ -45,6 +44,7 @@ use Getopt::Long;
 use LWP::UserAgent;
 use Thread::Queue;
 
+my $conffile = "whohas.cf";
 my $confdir = "$HOME/.whohas";
 # make .whohas directory in home directory
 unless (-d $confdir) {
@@ -54,27 +54,33 @@ unless (-d $confdir) {
 my @columns = (11,38,18,4,10,25);
 my $cols = 6;
 
-my $fedora_min_release		 =  20			;
-my $fedora_max_release		 =  21			;
-my $ubuntu_current_release	 = "all"		;
-my $opensuse_major		 = "13"			;
-my $opensuse_minor		 = "1"			;
-my $mandrivaVersion		 = "2011.0"		;
-my $openbsd_release		 = "5.5"		;
-my $slackware_version_for_lp_net = "13.1"		;
-my $slackfind_version		 = 9			; # corresponds to 13.1
+our $fedora_min_release		 =  22			;
+our $fedora_max_release		 =  23			;
+our $debian_current_release	 = "all"		;
+our $ubuntu_current_release	 = "all"		;
+our $openbsd_release		 = "5.7"		;
 
-my @distrosAvailable = ('arch','cygwin','debian','fedora','fink','freebsd','gentoo','macports','mandriva','netbsd','openbsd','opensuse','slack','sourcemage','ubuntu');
+my @distrosAvailable = qw(arch cygwin debian fedora fink freebsd gentoo macports mandriva netbsd openbsd opensuse slack sourcemage ubuntu);
 my %distrosSelected;
 foreach (@distrosAvailable) {
 	$distrosSelected{$_} = 1;
 }
 
-my @distroSelections;
+our @distroSelections;
 my $nothreads;
 my $shallow;
 my $option_help;
 my $option_strict;
+
+if ( -s "$confdir/$conffile" ) {
+	eval {
+		do "$confdir/$conffile";
+	};
+	if ($@) {
+		print STDERR 'Eval of configuration caused errors. Aborting.\n';
+		exit;
+	}
+}
 
 GetOptions(
 	"d=s" => \@distroSelections,
@@ -137,8 +143,6 @@ foreach (keys %distrosSelected) {
 	if ($distrosSelected{$_}) {
 		if ($_ eq 'arch') {
 			$q->enqueue('arch', 'aur');
-		} elsif ($_ eq 'slack') {
-			$q->enqueue('slack', 'lp_net');
 		} else {
 			$q->enqueue($_);
 		}
@@ -231,62 +235,6 @@ sub month_to_digits {
 	$_[0] =~ s/NOV/11/i;
 	$_[0] =~ s/DEC/12/i;
 	return ($_[0]);
-}
-
-sub lp_net {
-	my $version = $slackware_version_for_lp_net;
-	my @lines = split /\n/, &fetchdoc("http://www.linuxpackages.net/search_view.php?by=name&name=".$_[0]."&ver=".$version);
-	my @names;
-	my @versions;
-	my @dates;
-	my @sizes;
-	my @repos;
-	my @urls;
-	for (my $i = 0; $i < @lines; $i++) {
-		if ($lines[$i] =~ /<tr bgcolor="#ffffff"><td>/) {
-			push @names,    (split /">|<\/a/,   $lines[$i+1])[1];
-			push @versions, (split /<\/td/,     $lines[$i+3])[0];
-			push @repos,    (split /<\/td/,     $lines[$i+5])[0];
-			my $url = (split /href="|">/, $lines[$i+8])[1];
-			my @ret = &lp_net_details($url);
-			push @urls, $url;
-			push @sizes, $ret[0];
-			push @dates, $ret[1];
-			$i += 10;
-		}
-	}
-	for (my $i = 0; $i < @repos; $i++) {
-		&pretty_print($cols,@columns,"lp.net",$names[$i],$versions[$i],$sizes[$i],$dates[$i],$repos[$i],$urls[$i]);
-	}
-	return ();
-}
-
-sub lp_net_details {
-	my $size;
-	my $date;
-	my $findd = 0;
-	my $finds = 0;
-	my @lines = split /\n/, &fetchdoc($_[0]);
-	for (my $i = 340; $i < @lines;$i++) {
-		if ($lines[$i] =~ /Date :/) {
-			if ($findd == 1) {
-				die "encountered several dates for package\n";
-			} else {
-				$findd = 1;
-			}
-			$date = join "", (split //, (split /<b>|<\/b>/, $lines[$i])[1])[0..9];
-		}
-		if ($lines[$i] =~ /Filesize :/) {
-			if ($finds == 1) {
-				die "encountered several sizes for package\n";
-			} else {
-				$finds = 1;
-			}
-			my $presize = (split / /, (split /<b>|<\/b>/, $lines[$i])[1])[0];
-			$size = &size_trim($presize*1000);
-		}
-	}
-	return ($size,$date);
 }
 
 sub macports {
@@ -675,7 +623,7 @@ sub openbsd_older {
 }
 
 sub cygwin {
-	my $baseurl = "http://www.cygwin.com/packages/";
+	my $baseurl = "http://www.cygwin.com/packages";
 	my @names;
 	my @versions;
 	my @urls;
@@ -685,11 +633,18 @@ sub cygwin {
 	my @archs;
 	my $distroname = "Cygwin";
 	my $searchy = $_[0];
-	my @lines = split /\n/, &fetchdoc($baseurl);
+	my @lines = split /\n/, &fetchdoc("$baseurl/package_list.html");
 	for (my $i = 0; $i < @lines; $i++) {
-		if ($lines[$i] =~ /$searchy/i && $lines[$i] =~ /ware\.org\/icons\/ba/) {
-			my $temp = (split /href\=\"|\"\>/, $lines[$i])[2];
-			my @detailLines = split /\n/, &fetchdoc($baseurl.$temp);
+		my $line = $lines[$i];
+		if ($line =~ /<tr><td><a href="/) {
+			$line =~ s{^<tr><td>}{};
+			$line =~ s{</td></tr>$}{};
+			my @parts = split /<\/td><td>/, $line;
+			$parts[0] =~ s{^<a href="?}{};
+			$parts[0] =~ s{</a>$}{};
+			my ($temp, $name) = split /"?>/, $parts[0], 2;
+			next unless $name =~ /$searchy/i;
+			my @detailLines = split /\n/, &fetchdoc("$baseurl/$temp/");
 			my $highest = '';
 			for (my $a = 0; $a < @detailLines; $a++) { # incrementing ensures that the highest version number will prevail
 								   # (higher ones occur lower down at time of writing)
@@ -702,7 +657,7 @@ sub cygwin {
 			push @names,    $comps[1];
 			push @archs,    $comps[0];
 			push @dates,    '';
-			push @urls,     '';
+			push @urls,     "$baseurl/$temp/$highest";
 			push @sizes,    '';
 			push @repos,    '';
 		}
@@ -831,64 +786,14 @@ sub combos_freebsd {
 	return($name,$version);
 }
 
-sub slack {
-	my $baseurl = 'http://slackfind.net';
-	my @repos;
-	my @groups;
-	my @names;
-	my @versions;
-	my @urls;
-	my @combos;
-	my @sizes;
-	my @dates;
-	my @lines = split /\n/, &fetchdoc($baseurl."/en/packages/search/?name=".$_[0]."&distversion=".$slackfind_version);
-	my $pages = 0;
-	my @pagedURLs;
-
-	# finding additional pages
-	if (@lines > 800) {
-		for (my $i = 800; $i < @lines; $i++) {
-			if ($lines[$i] =~ /<span class="paging-button">/) {
-				$pages++;
-				if ($pages > 1) {
-					my $tmp = (split /"/, $lines[$i])[3];
-					$tmp =~ s/\&amp;/&/g;
-					push @pagedURLs, $tmp;
-				}
-			}
-		}
-	}
-
-	# finding content
-	my $a = -1;
-	for (; $a < @pagedURLs; $a++) {
-		unless ($a < 0) {
-			@lines = split /\n/, &fetchdoc($baseurl."/en/packages/search/".$pagedURLs[$a]);
-		}
-		for (my $i = 0; $i < @lines; $i++) {
-			if ($lines[$i] =~ /result-package-name/) {
-				my $a = @repos;
-				($names[$a],$versions[$a]) = &slack_combos($lines[$i+1]);
-			} elsif ($lines[$i] =~ /result-repository/) {
-				my $tmp = $lines[$i+1];
-				push @repos, (split /<span>| <a href/, $tmp)[1];
-			}
-		}
-	}
-	for (my $i = 0; $i < @repos; $i++) {
-		&pretty_print($cols,@columns,"Slackware",$names[$i],$versions[$i],$sizes[$i],$dates[$i],$repos[$i],$urls[$i]);
-	}
-	return ();
-}
-
 sub slack_combos {
 	$_[0] =~ s/^\s*//;
 	my @parts = split /-/, $_[0];
-	return ((join '-', @parts[0..(@parts-4)]),(join '-', @parts[(@parts-3)..(@parts-1)]));
+	return ((join '-', @parts[0..(@parts-4)]),$parts[(@parts-3)]);
 }
 
-sub slack_old {
-	my $slackbase  = "http://packages.slackware.it/";
+sub slack {
+	my $slackbase  = "http://packages.slackware.com/";
 	my @repos;
 	my @groups;
 	my @names;
@@ -897,19 +802,28 @@ sub slack_old {
 	my @combos;
 	my @sizes;
 	my @dates;
-	my @lines = split /\n|<br>|<\/td>/, &fetchdoc($slackbase."/search.php?v=current&t=1&q=".$_[0]);
+	my @lines = split /\n|<br>|<\/tr>/, &fetchdoc($slackbase."/?release=slackware-current&mode=package&result=100&extra=on&pasture=on&patches=on&slackware=on&source=on&testing=on&search=".$_[0]);
 	my $now = 0;
 	for (my $i = 0; $i < @lines; $i++) {
-		if ($lines[$i] =~ /class="pkgtitle"/) {
-			my @parts = split /a href="|">|<\/a> in |<\/div>/, $lines[$i];
-			$parts[4] =~ s/slackware\///;
-			push @groups, $parts[4];
-			push @repos, "";
-			($names[$now],$versions[$now]) = &combor($parts[3]);
+		if ($lines[$i] =~ /<td nowrap><a href=/) {
+			my $line = $lines[$i];
+			$line =~ s{<td align="right">}{<td>};
+			$line =~ s{<td nowrap>}{<td>};
+			$line =~ s{^<tr><td>}{};
+			$line =~ s{</td>$}{};
+			my @parts = split /<\/td><td>/, $line;
+			my ($repo, $group) = split '/', $parts[1], 2;
+			push @groups, $group;
+			push @repos, $repo;
+			$parts[2] =~ s{^<a href="?}{};
+			$parts[2] =~ s{</a>$}{};
+			my ($url, $combo) = split '>', $parts[2], 2;
+			my ($name, $version) = &slack_combos($combo);
+			($names[$now],$versions[$now]) = ($name, $version);
 			$now++;
-			push @urls, $slackbase.$parts[2];
+			push @urls, $slackbase.$url;
 			push @dates, "";
-			push @sizes, "";
+			push @sizes, $parts[3];
 		}
 	}
 	for (my $i = 0; $i < @repos; $i++) {
@@ -954,7 +868,7 @@ sub debian_size_convert {
 }
 
 sub debian {
-	my @dists = ( 'all' );
+	my @dists = ($debian_current_release);
 	&debuntu('http://packages.debian.org','Debian',\@dists,$_[0]);
 	return();
 }
@@ -1201,37 +1115,7 @@ sub trim($) {
 	return $string;
 }
 
-sub prep_suse_repo {
-	if ($_[0] =~ /http\:\/\/download\.opensuse\.org/) {
-		if ($_[0] =~ /repositories/) {
-			if ($_[0] =~ /home\:/) {
-				$_[0] =~ s/^http\:\/\/download\.opensuse\.org\/repositories\/home\:\///;
-				$_[0] =~ s/\/openSUSE_11.0//;
-				$_[0] =~ s/\:\/.*$//g;
-				return $_[0];
-			} elsif ($_[0] =~ /http\:\/\/.*:\//) {
-				$_[0] =~ s/http\:\/\/download\.opensuse\.org\/repositories\///;
-				$_[0] =~ s/\:\/.*//;
-				return $_[0];
-			} else {
-				$_[0] =~ s/http\:\/\/download\.opensuse\.org\/repositories\///;
-				$_[0] =~ s/\/.*//;
-				return $_[0];
-			}
-		} elsif ($_[0] =~ /http\:\/\/download\.opensuse\.org\/distribution\// && $_[0] =~ /repo\/oss/) {
-			return "suse/oss";
-		}
-	} elsif ($_[0] =~ "http://packman.iu-bremen.de/suse/") {
-		return "packman";
-	} else {
-		return $_[0];
-	}
-}
-
 sub opensuse {
-	my $release_string = $opensuse_major.'.'.$opensuse_minor;
-	my $major = $opensuse_major;
-	my $minor = $opensuse_minor;
 	my $opensusebase = "http://software.opensuse.org";
 	my @names;
 	my @repos;
@@ -1242,38 +1126,21 @@ sub opensuse {
 	my @dates;
 	my $distroname = "openSUSE";
 
-	my @lines = split /\n/, &fetchdoc($opensusebase."/search?q=".$_[0]."&baseproject=".$distroname."%3A".$release_string."&lang=en&exclude_debug=true");
-	my $continuity = 2;
+	my @lines = split /\n/, &fetchdoc($opensusebase."/search?q=".$_[0]."&baseproject=".$distroname."&lang=en&exclude_debug=true");
 	for (my $i = 0; $i < @lines; $i++) {
-		if ($lines[$i] =~ /div class="search_o_title"/) {
-			push @names, (split /<\/?h3>/, $lines[($i+2)])[1];
-			for (my $a = $i+1; $a < $i + 20; $a++) {
-				if ($lines[$a] =~ /<h4><a class="blue_over" href=/) {
-					my @temps = split /\"\>|\<\/a\>/, $lines[$a];
-					$temps[1] =~ s/\/openSUSE_$major\.$minor$//;
-					$temps[1] =~ s/^openSUSE\:$major\.$minor\///;
-					$temps[1] =~ s/\/$major\.$minor$//;
-					$temps[1] =~ s/^home/\~/;
-					push @repos, $temps[1];
-					last;
-				}
-			}
-			for (my $a = $i + 10; $a < $i + 50; $a++) {
-				if ($lines[$a] =~ /a style="margin-right: 2em"  href/) {
-					my @parts = split /\"\>|\<\/a\>/, $lines[$a];
-					my @segments = split /\-/, $parts[1];
-					push @versions, $segments[(@segments-2)];
-					last;
-				}
-			}
-			push @urls,   '';
+		if ($lines[$i] =~ /<div class="search-result-txt"/) {
+			my $line = $lines[($i+1)];
+			$line =~ s{^.*<h3><a href="}{};
+			$line =~ s{</?mark>}{}g;
+			$line =~ s{</a>.*}{};
+			my ($url, $name) = split /">/, $line, 2;
+			push @names, $name;
+			push @urls, "$opensusebase$url";
+			push @versions, '';
 			push @sizes,  '';
 			push @dates,  '';
 			push @groups, '';
-		}
-		if ($lines[$i] =~ /type:'post', url:'\/search\/search.*'\}\); return false;">$continuity<\/a>/) {
-			push @lines,  split /\n/, &fetchdoc($opensusebase."?q=".$_[0]."&baseproject=openSUSE:".$release_string.'&p='.$continuity);
-			$continuity++;
+			push @repos, '';
 		}
 	}
 	for (my $i = 0; $i < @repos; $i++) {
@@ -1519,7 +1386,7 @@ sub mandriva {
 	my @repos;
 	my @urls;
 	# NB this server also supports exact matching
-	my @lines = split /\n/, &fetchdoc($baseurl."/search?search=".$_[0]."&type=fuzzyname&deptype=P&distribution=Mandriva&release=".$mandrivaVersion."&arch=");
+	my @lines = split /\n/, &fetchdoc($baseurl."/search?search=".$_[0]."&type=fuzzyname&deptype=P&distribution=Mandriva&release=current");
 	for (my $i = 350; $i < @lines; $i++) {
 		#TODO need to check for possible further pages (lists 20 per page)
 		#TODO ajax or xml::rpc access might have advantages w.r.t. paging (i.e. none required) 

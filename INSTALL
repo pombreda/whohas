@@ -1,4 +1,4 @@
-whohas 0.22
+whohas
 
 Dependencies
 ============
@@ -17,4 +17,4 @@ Sys::CPU (optional)
 To install
 ==========
 
-execute "./install.sh"
+sudo make install
